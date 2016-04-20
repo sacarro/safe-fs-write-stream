@@ -1,11 +1,15 @@
 var util = require("util");
 var WriteStream = require("fs").WriteStream;
 
+/**
+ * FS Write stream extension that maintains a queue of write
+ * requests when a write is not immediately executed. It will
+ * start writing again once the 'drain' event has been fired.
+ */
 function FsSafeWriteStream(path, options) {
 
     // Super constructor
     WriteStream.call(this, path, options);
-
 
     /**
      * Flag for whther or not this is waiting for a
@@ -24,26 +28,19 @@ function FsSafeWriteStream(path, options) {
      */
     var queue = [];
 
-
+    // Always listen to the drain event so that we know
+    // when we can start writing again.
     this.on("drain", function() {
-
-        console.warn("DRAINING");
-        setImmediate(function() {
-            this.doWrite();
-        }.bind(this));
+        this.doWrite();
     });
 
 
-    this.on("finish", function() {
-        console.warn("FINISHED");
-    });
-
-
-    this.on("error", function() {
-        console.log("EEEEEEEEEEEEEEEEEEEERRRRRRORRRR", arguments);
-    });
-
-
+    /**
+     * Attempts to take the next write request off the queue
+     * and write it to the stream.
+     *
+     * @private
+     */
     Object.defineProperty(this, "doWrite", {
         enumerable: false,
         writable: false,
@@ -58,8 +55,13 @@ function FsSafeWriteStream(path, options) {
 
             // Check to see if it is a call to end the stream.
             if (nextWrite.isEnd) {
-                console.log("Doing end", nextWrite.args);
-                WriteStream.prototype.end.apply(this, nextWrite.args);
+                // For some reson this would never actually write the bytes
+                // WriteStream.prototype.end.apply(this, nextWrite.args);
+                // So we just do a write then an end with no arguments
+                if (nextWrite.args.length) {
+                    WriteStream.prototype.write.apply(this, nextWrite.args);
+                }
+                WriteStream.prototype.end.apply(this);
                 queue = null;
                 return;
             }
@@ -72,6 +74,13 @@ function FsSafeWriteStream(path, options) {
         }
     });
 
+    /**
+     * Adds the write request to the queue and starts writing if this
+     * is not already writing requests.
+     *
+     * @param {object[]} writeArgs - The arguments to pass to the write.
+     * @param {boolean} isEnd - True if the request is from a call to the end function, false otherwise.
+     */
     Object.defineProperty(this, "requestWrite", {
         enumerable: false,
         writable: false,
@@ -98,18 +107,21 @@ function FsSafeWriteStream(path, options) {
 util.inherits(FsSafeWriteStream, WriteStream);
 
 
+/**
+ * Requests a write to the stream.
+ */
 Object.defineProperty(FsSafeWriteStream.prototype, "write", {
-
     enumerable: true,
     writable: false,
     value: function write() {
         this.requestWrite(Array.prototype.slice.call(arguments, 0));
-
     }
 });
 
+/**
+ * Requests an end to the stream.
+ */
 Object.defineProperty(FsSafeWriteStream.prototype, "end", {
-
     enumerable: true,
     writable: false,
     value: function end() {
@@ -119,6 +131,5 @@ Object.defineProperty(FsSafeWriteStream.prototype, "end", {
 
 
 module.exports = {
-
     WriteStream: FsSafeWriteStream
 };
